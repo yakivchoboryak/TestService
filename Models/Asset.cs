@@ -1,4 +1,4 @@
-﻿using System;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MarketPriceService.Models
 {
@@ -7,7 +7,7 @@ namespace MarketPriceService.Models
         public string? InstrumentId { get; set; }
         public string? Symbol { get; set; }
         public DateTime Timestamp { get; set; }
-        public float Price { get; set; }
+        public decimal Price { get; set; }
         public int Volume { get; set; }
     }
 }

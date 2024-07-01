@@ -1,4 +1,5 @@
-﻿using MarketPriceService.Models;
+﻿using Azure.Core;
+using MarketPriceService.Models;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Net.WebSockets;
@@ -49,11 +50,14 @@ namespace MarketPriceService.Services
             using HttpClient client = new();
             List<Asset> fetchedAssets = new();
 
+            string accessToken = await GetAccessTokenAsync();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
             string requesturl = _configuration["Fintacharts:Uri"] + _configuration["Fintacharts:AssetsListUrl"];
             int pageIndex = 1;
             int pagesToFetch = 1;
 
-            while (pageIndex < pagesToFetch)
+            while (pageIndex <= pagesToFetch)
             {
                 HttpResponseMessage response = await client.GetAsync(requesturl + $"?page={pageIndex}");
 

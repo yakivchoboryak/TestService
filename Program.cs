@@ -1,41 +1,38 @@
 using MarketPriceService;
 using MarketPriceService.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TestService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-
 builder.Services.AddDbContext<MarketPriceServiceDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register application services
 builder.Services.AddScoped<IFintachartsService, FintachartsService>();
-
-// Register hosted service
+builder.Services.AddScoped<IMarketPriceRepository, MarketPriceRepository>();
 builder.Services.AddHostedService<FintachartsSocketService>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+using (var scope = app.Services.CreateScope())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    var db = scope.ServiceProvider.GetRequiredService<MarketPriceServiceDbContext>();
+    db.Database.EnsureCreated();
+
+    var assets = await scope.ServiceProvider.GetRequiredService<IFintachartsService>().GetSupportedAssetsAsync();
+    var repo = scope.ServiceProvider.GetRequiredService<IMarketPriceRepository>();
+    await repo.CreateAssets(assets);
 }
 
+app.UseSwagger();
+app.UseSwaggerUI();
+
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
-
-var assets = await app.Services.GetRequiredService<IFintachartsService>().GetSupportedAssetsAsync();
-app.Services.GetRequiredService<MarketPriceServiceDbContext>()
-
+ 
 app.Run();

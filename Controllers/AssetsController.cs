@@ -1,30 +1,36 @@
-using MarketPriceService.Services;
+using MarketPriceService.Models;
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
+using TestService.Services;
 
 namespace MarketPriceService.Controllers;
 
 [ApiController]
 [Route("api/assets")]
-    public class AssetsController : ControllerBase
+public class AssetsController : ControllerBase
+{
+    private readonly IMarketPriceRepository _marketPriceRepository;
+
+    public AssetsController(IMarketPriceRepository marketPriceRepository)
     {
-        private readonly IFintachartsService _fintachartsService;
-
-        public AssetsController(IFintachartsService fintachartsService)
-        {
-            _fintachartsService = fintachartsService;
-        }
-
-        [HttpGet]
-        public async Task<IActionResult> GetAssets()
-        {
-            var assets = await _fintachartsService.GetSupportedAssetsAsync();
-            return Ok(assets);
-        }
-
-        [HttpGet("{symbol}")]
-        public async Task<IActionResult> GetAssetPrice(string symbol)
-        {
-            var asset = await _fintachartsService.GetAssetPriceAsync(symbol);
-            return Ok(asset);
-        }
+        _marketPriceRepository = marketPriceRepository;
     }
+
+    [HttpGet]
+    [ProducesResponseType(typeof(List<Asset>), (int)HttpStatusCode.OK)]
+    public async Task<IActionResult> GetAssets()
+    {
+        List<Asset> assets = await _marketPriceRepository.GetAllAssetsAsync();
+        return Ok(assets);
+    }
+
+    [HttpGet("{symbol}")]
+    [ProducesResponseType(typeof(Asset),(int)HttpStatusCode.OK)]
+    [ProducesResponseType((int)HttpStatusCode.BadRequest)]
+    public async Task<IActionResult> GetAssetPrice(string symbol)
+    {
+            Asset asset = await _marketPriceRepository.GetAssetBySymbolAsync(symbol);
+            if (asset == null) return BadRequest($"No asset match for symbol {symbol}");
+            return Ok(asset);
+    }
+}

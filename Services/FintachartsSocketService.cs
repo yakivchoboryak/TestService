@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics.Metrics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -6,7 +7,10 @@ using System.Threading.Tasks;
 using Azure.Core;
 using MarketPriceService.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using Newtonsoft.Json;
+using TestService.DTO;
+using TestService.Services;
 
 namespace MarketPriceService.Services
 {
@@ -16,7 +20,8 @@ namespace MarketPriceService.Services
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly ClientWebSocket _webSocket;
 
-        public FintachartsSocketService(IConfiguration configuration, IServiceScopeFactory serviceScopeFactory)
+        public FintachartsSocketService(IConfiguration configuration,
+                                        IServiceScopeFactory serviceScopeFactory)
         {
             _configuration = configuration;
             _serviceScopeFactory = serviceScopeFactory;
@@ -36,7 +41,7 @@ namespace MarketPriceService.Services
                 await _webSocket.ConnectAsync(new Uri(webSocketUrl), cancellationToken);
                 Console.WriteLine("Connected to WebSocket");
 
-                await ReceiveMessagesAsync(cancellationToken);
+                Task.Run(async () => await ReceiveMessagesAsync(cancellationToken));
             }
             catch (Exception ex)
             {
@@ -48,23 +53,7 @@ namespace MarketPriceService.Services
         {
             var buffer = new byte[1024 * 4];
 
-            var subscriptionMessage = new
-            {
-                type = "l1-subscription",
-                id = "1",
-                instrumentId = "ad9e5345-4c3b-41fc-9437-1d253f62db52",
-                provider = "simulation",
-                subscribe = true,
-                kinds = new[] { "ask", "bid", "last" }
-            };
-
-            // Serialize the object to JSON string
-            var messageString = JsonConvert.SerializeObject(subscriptionMessage);
-
-            // Encode the JSON string as bytes
-            var messageBytes = Encoding.UTF8.GetBytes(messageString);
-
-            await _webSocket.SendAsync(messageBytes, WebSocketMessageType.Binary, true, token);
+            await SubscribeAssets(token);
 
             while (_webSocket.State == WebSocketState.Open && !token.IsCancellationRequested)
             {
@@ -75,31 +64,57 @@ namespace MarketPriceService.Services
                     break;
                 }
                 var jsonString = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                var asset = JsonConvert.DeserializeObject<Asset>(jsonString);
-                if (asset != null)
+                var assetDto = JsonConvert.DeserializeObject<AssetSocketDTO>(jsonString);
+                assetDto.Bid = assetDto.Bid ?? assetDto.Ask ?? assetDto.Last;
+                if (assetDto != null && assetDto.Bid!=null && !assetDto.InstrumentId.IsNullOrEmpty())
                 {
-                    //await UpdateAssetPriceAsync(asset!);
+                    var asset = new Asset
+                    {
+                        InstrumentId = assetDto.InstrumentId,
+                        Timestamp = assetDto.Bid.Timestamp,
+                        Price = assetDto.Bid.Price,
+                        Volume = assetDto.Bid.Volume
+                    };
+
+                    await UpdateAssetPriceAsync(asset);
                 }
+            }
+        }
+
+        private async Task SubscribeAssets(CancellationToken token)
+        {
+            var assets = await GetAllAssetsAsync();
+            int i = 1;
+            foreach (var asset in assets)
+            {
+                var subscriptionMessage = new
+                {
+                    type = "l1-subscription",
+                    id = i.ToString(),
+                    instrumentId = asset.InstrumentId,
+                    provider = "simulation",
+                    subscribe = true,
+                    kinds = new[] { "ask", "bid", "last" }
+                };
+                i++;
+                var messageString = JsonConvert.SerializeObject(subscriptionMessage);
+                var messageBytes = Encoding.UTF8.GetBytes(messageString);
+                await _webSocket.SendAsync(messageBytes, WebSocketMessageType.Binary, true, token);
             }
         }
 
         private async Task UpdateAssetPriceAsync(Asset asset)
         {
             using var scope = _serviceScopeFactory.CreateScope();
-            var context = scope.ServiceProvider.GetRequiredService<MarketPriceServiceDbContext>();
-            var existingAsset = await context.Assets.FindAsync(asset.Symbol);
-            if (existingAsset != null)
-            {
-                existingAsset.Price = asset.Price;
-                existingAsset.LastUpdated = DateTime.UtcNow;
-                context.Assets.Update(existingAsset);
-            }
-            else
-            {
-                asset.LastUpdated = DateTime.UtcNow;
-                await context.Assets.AddAsync(asset);
-            }
-            await context.SaveChangesAsync();
+            var marketPriceRepository = scope.ServiceProvider.GetRequiredService<IMarketPriceRepository>();
+            await marketPriceRepository.UpdateAssetPriceAsync(asset);
+        }
+
+        private async Task<List<Asset>> GetAllAssetsAsync()
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var marketPriceRepository = scope.ServiceProvider.GetRequiredService<IMarketPriceRepository>();
+            return await marketPriceRepository.GetAllAssetsAsync();
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
